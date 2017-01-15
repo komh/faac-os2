@@ -91,6 +91,4 @@ libmp4v2_a_SOURCES = \
 
 EXTRA_DIST = API_CHANGES \
 	INTERNALS \
-	libmp4v260.dsp \
-	libmp4v2_st60.dsp \
 	TODO
