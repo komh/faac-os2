@@ -77,7 +77,7 @@ AC_CHECK_DECL(strsep, MY_DEFINE(HAVE_STRSEP))
 AC_CHECK_HEADERS(sys/time.h)
 AC_HEADER_TIME
 AC_TYPE_OFF_T
-AC_CHECK_TYPES([in_port_t, socklen_t], , , 
+AC_CHECK_TYPES([in_port_t, socklen_t], , ,
 	[#include <sys/types.h>
 	 #include <sys/socket.h>
 	 #include <netinet/in.h>])

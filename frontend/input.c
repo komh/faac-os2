@@ -208,7 +208,7 @@ pcmfile_t *wav_open_read(const char *name, int rawinput)
         {
           waveformat_pcm_guid[0] = WAVE_FORMAT_FLOAT;
           if (memcmp(wave.SubFormat, waveformat_pcm_guid, 16))
-          {          
+          {
             unsuperr(name);
             return NULL;
           }
