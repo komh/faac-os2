@@ -27,9 +27,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__OS2__)
 #include <io.h>
 #include <fcntl.h>
+
+# ifdef __OS2__
+#  define _setmode(h, m) setmode((h), (m))
+# endif
 #endif
 
 #include "input.h"
@@ -135,7 +139,7 @@ pcmfile_t *wav_open_read(const char *name, int rawinput)
 
   if (!strcmp(name, "-"))
   {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__OS2__)
     _setmode(_fileno(stdin), O_BINARY);
 #endif
     wave_f = stdin;

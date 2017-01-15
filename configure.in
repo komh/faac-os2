@@ -19,7 +19,7 @@ AM_PROG_LIBTOOL
 dnl OS specific checks and defines
 case "${host_os}" in
     os2*)
-        LDFLAGS="-no-undefined -Zbin-files"
+        LDFLAGS="-no-undefined"
         ;;
 esac
 
