@@ -27,6 +27,11 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifdef __OS2__
+# undef bswap16
+# undef bswap32
+#endif
+
 enum ATOM_TYPE
 {
     ATOM_STOP = 0 /* end of atoms */ ,
