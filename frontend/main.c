@@ -44,6 +44,10 @@
 #include <unistd.h>
 #endif
 
+#ifdef __OS2__
+#include <time.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
