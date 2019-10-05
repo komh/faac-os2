@@ -23,26 +23,23 @@ copyright notice must be included in all copies or derivative works.
 
 Copyright (c) 1997.
 **********************************************************************/
-/*
- * $Id: bitstream.c,v 1.34 2007/06/05 18:59:47 menno Exp $
- */
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "coder.h"
 #include "channels.h"
-#include "huffman.h"
+#include "huff2.h"
 #include "bitstream.h"
-#include "ltp.h"
 #include "util.h"
 
-static int CountBitstream(faacEncHandle hEncoder,
+static int CountBitstream(faacEncStruct* hEncoder,
                           CoderInfo *coderInfo,
                           ChannelInfo *channelInfo,
                           BitStream *bitStream,
                           int numChannels);
-static int WriteADTSHeader(faacEncHandle hEncoder,
+static int WriteADTSHeader(faacEncStruct* hEncoder,
                            BitStream *bitStream,
                            int writeFlag);
 static int WriteCPE(CoderInfo *coderInfoL,
@@ -71,12 +68,6 @@ static int WriteICS(CoderInfo *coderInfo,
                     int commonWindow,
                     int objectType,
                     int writeFlag);
-static int WriteLTPPredictorData(CoderInfo *coderInfo,
-                                 BitStream *bitStream,
-                                 int writeFlag);
-static int WritePredictorData(CoderInfo *coderInfo,
-                              BitStream *bitStream,
-                              int writeFlag);
 static int WritePulseData(CoderInfo *coderInfo,
                           BitStream *bitStream,
                           int writeFlag);
@@ -152,7 +143,7 @@ static int WriteFAACStr(BitStream *bitStream, char *version, int write)
 }
 
 
-int WriteBitstream(faacEncHandle hEncoder,
+int WriteBitstream(faacEncStruct* hEncoder,
                    CoderInfo *coderInfo,
                    ChannelInfo *channelInfo,
                    BitStream *bitStream,
@@ -162,7 +153,8 @@ int WriteBitstream(faacEncHandle hEncoder,
     int bits = 0;
     int bitsLeftAfterFill, numFillBits;
 
-    CountBitstream(hEncoder, coderInfo, channelInfo, bitStream, numChannel);
+    if (CountBitstream(hEncoder, coderInfo, channelInfo, bitStream, numChannel) < 0)
+        return -1;
 
     if(hEncoder->config.outputFormat == 1){
         bits += WriteADTSHeader(hEncoder, bitStream, 1);
@@ -243,7 +235,7 @@ int WriteBitstream(faacEncHandle hEncoder,
     return bits;
 }
 
-static int CountBitstream(faacEncHandle hEncoder,
+static int CountBitstream(faacEncStruct* hEncoder,
                           CoderInfo *coderInfo,
                           ChannelInfo *channelInfo,
                           BitStream *bitStream,
@@ -326,10 +318,21 @@ static int CountBitstream(faacEncHandle hEncoder,
 
     hEncoder->usedBytes = bit2byte(bits);
 
+    if (hEncoder->usedBytes > bitStream->size)
+    {
+        fprintf(stderr, "frame buffer overrun\n");
+        return -1;
+    }
+    if (hEncoder->usedBytes >= ADTS_FRAMESIZE)
+    {
+        fprintf(stderr, "frame size limit exceeded\n");
+        return -1;
+    }
+
     return bits;
 }
 
-static int WriteADTSHeader(faacEncHandle hEncoder,
+static int WriteADTSHeader(faacEncStruct* hEncoder,
                            BitStream *bitStream,
                            int writeFlag)
 {
@@ -413,8 +416,8 @@ static int WriteCPE(CoderInfo *coderInfoL,
         int numWindows, maxSfb;
 
         bits += WriteICSInfo(coderInfoL, bitStream, objectType, channelInfo->common_window, writeFlag);
-        numWindows = coderInfoL->num_window_groups;
-        maxSfb = coderInfoL->max_sfb;
+        numWindows = coderInfoL->groups.n;
+        maxSfb = coderInfoL->sfbn;
 
         if (writeFlag) {
             PutBit(bitStream, channelInfo->msInfo.is_present, LEN_MASK_PRES);
@@ -519,7 +522,7 @@ static int WriteICSInfo(CoderInfo *coderInfo,
     /* For short windows, write out max_sfb and scale_factor_grouping */
     if (coderInfo->block_type == ONLY_SHORT_WINDOW){
         if (writeFlag) {
-            PutBit(bitStream, coderInfo->max_sfb, LEN_MAX_SFBS);
+            PutBit(bitStream, coderInfo->sfbn, LEN_MAX_SFBS);
             grouping_bits = FindGroupingBits(coderInfo);
             PutBit(bitStream, grouping_bits, MAX_SHORT_WINDOWS - 1);  /* the grouping bits */
         }
@@ -527,7 +530,7 @@ static int WriteICSInfo(CoderInfo *coderInfo,
         bits += MAX_SHORT_WINDOWS - 1;
     } else { /* Otherwise, write out max_sfb and predictor data */
         if (writeFlag) {
-            PutBit(bitStream, coderInfo->max_sfb, LEN_MAX_SFBL);
+            PutBit(bitStream, coderInfo->sfbn, LEN_MAX_SFBL);
         }
         bits += LEN_MAX_SFBL;
 #ifdef DRM
@@ -537,22 +540,9 @@ static int WriteICSInfo(CoderInfo *coderInfo,
     }
     bits += LEN_TNS_PRES;
 #endif
-        if (objectType == LTP)
-        {
-            bits++;
-            if(writeFlag)
-                PutBit(bitStream, coderInfo->ltpInfo.global_pred_flag, 1); /* Prediction Global used */
-
-            bits += WriteLTPPredictorData(coderInfo, bitStream, writeFlag);
-            if (common_window)
-                bits += WriteLTPPredictorData(coderInfo, bitStream, writeFlag);
-        } else {
             bits++;
             if (writeFlag)
-                PutBit(bitStream, coderInfo->pred_global_flag, LEN_PRED_PRES);  /* predictor_data_present */
-
-            bits += WritePredictorData(coderInfo, bitStream, writeFlag);
-        }
+                PutBit(bitStream, 0, LEN_PRED_PRES);  /* predictor_data_present */
 #ifndef DRM
     }
 #endif
@@ -589,8 +579,8 @@ static int WriteICS(CoderInfo *coderInfo,
     bits += LEN_GLOB_GAIN;
 #endif
 
-    bits += SortBookNumbers(coderInfo, bitStream, writeFlag);
-    bits += WriteScalefactors(coderInfo, bitStream, writeFlag);
+    bits += writebooks(coderInfo, bitStream, writeFlag);
+    bits += writesf(coderInfo, bitStream, writeFlag);
 #ifdef DRM
     if (writeFlag) {
         /* length_of_reordered_spectral_data */
@@ -619,86 +609,6 @@ static int WriteICS(CoderInfo *coderInfo,
 #endif
 
     /* Return number of bits */
-    return bits;
-}
-
-static int WriteLTPPredictorData(CoderInfo *coderInfo, BitStream *bitStream, int writeFlag)
-{
-    int i, last_band;
-    int bits;
-    LtpInfo *ltpInfo = &coderInfo->ltpInfo;
-
-    bits = 0;
-
-    if (ltpInfo->global_pred_flag)
-    {
-
-        if(writeFlag)
-            PutBit(bitStream, 1, 1); /* LTP used */
-        bits++;
-
-        switch(coderInfo->block_type)
-        {
-        case ONLY_LONG_WINDOW:
-        case LONG_SHORT_WINDOW:
-        case SHORT_LONG_WINDOW:
-            bits += LEN_LTP_LAG;
-            bits += LEN_LTP_COEF;
-            if(writeFlag)
-            {
-                PutBit(bitStream, ltpInfo->delay[0], LEN_LTP_LAG);
-                PutBit(bitStream, ltpInfo->weight_idx,  LEN_LTP_COEF);
-            }
-
-            last_band = ((coderInfo->nr_of_sfb < MAX_LT_PRED_LONG_SFB) ?
-                coderInfo->nr_of_sfb : MAX_LT_PRED_LONG_SFB);
-//            last_band = coderInfo->nr_of_sfb;
-
-            bits += last_band;
-            if(writeFlag)
-                for (i = 0; i < last_band; i++)
-                    PutBit(bitStream, ltpInfo->sfb_prediction_used[i], LEN_LTP_LONG_USED);
-            break;
-
-        default:
-            break;
-        }
-    }
-
-    return (bits);
-}
-
-static int WritePredictorData(CoderInfo *coderInfo,
-                              BitStream *bitStream,
-                              int writeFlag)
-{
-    int bits = 0;
-
-    /* Write global predictor data present */
-    short predictorDataPresent = coderInfo->pred_global_flag;
-    int numBands = min(coderInfo->max_pred_sfb, coderInfo->nr_of_sfb);
-
-    if (writeFlag) {
-        if (predictorDataPresent) {
-            int b;
-            if (coderInfo->reset_group_number == -1) {
-                PutBit(bitStream, 0, LEN_PRED_RST); /* No prediction reset */
-            } else {
-                PutBit(bitStream, 1, LEN_PRED_RST);
-                PutBit(bitStream, (unsigned long)coderInfo->reset_group_number,
-                    LEN_PRED_RSTGRP);
-            }
-
-            for (b=0;b<numBands;b++) {
-                PutBit(bitStream, coderInfo->pred_sfb_flag[b], LEN_PRED_ENAB);
-            }
-        }
-    }
-    bits += (predictorDataPresent) ?
-        (LEN_PRED_RST +
-        ((coderInfo->reset_group_number)!=-1)*LEN_PRED_RSTGRP +
-        numBands*LEN_PRED_ENAB) : 0;
-
     return bits;
 }
 
@@ -825,22 +735,18 @@ static int WriteSpectralData(CoderInfo *coderInfo,
 {
     int i, bits = 0;
 
-    /* set up local pointers to data and len */
-    /* data array contains data to be written */
-    /* len array contains lengths of data words */
-    int* data = coderInfo->data;
-    int* len  = coderInfo->len;
-
     if (writeFlag) {
-        for(i = 0; i < coderInfo->spectral_count; i++) {
-            if (len[i] > 0) {  /* only send out non-zero codebook data */
-                PutBit(bitStream, data[i], len[i]); /* write data */
-                bits += len[i];
+        for(i = 0; i < coderInfo->datacnt; i++) {
+            int data = coderInfo->s[i].data;
+            int len = coderInfo->s[i].len;
+            if (len > 0) {
+                PutBit(bitStream, data, len);
+                bits += len;
             }
         }
     } else {
-        for(i = 0; i < coderInfo->spectral_count; i++) {
-            bits += len[i];
+        for(i = 0; i < coderInfo->datacnt; i++) {
+            bits += coderInfo->s[i].len;
         }
     }
 
@@ -913,8 +819,8 @@ static int FindGroupingBits(CoderInfo *coderInfo)
     int i, j;
     int index = 0;
 
-    for(i = 0; i < coderInfo->num_window_groups; i++){
-        for (j = 0; j < coderInfo->window_group_length[i]; j++){
+    for(i = 0; i < coderInfo->groups.n; i++){
+        for (j = 0; j < coderInfo->groups.len[i]; j++){
             tmp[index++] = i;
         }
     }
@@ -1083,7 +989,7 @@ static int rewind_word(int W, int len)
     return tmp_W;
 }
 
-static int WriteReorderedSpectralData(CoderInfo *coderInfo,
+static int WriteReorderedSpectralData(CoderInfo *coder,
                                       BitStream *bitStream,
                                       int writeFlag)
 {
@@ -1092,13 +998,13 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
     int segmcnt = 0;
     long startbitpos;
     segment_t segment[FRAME_LEN];
-    int* window_group_length = coderInfo->window_group_length;
-    int* sfb_offset = coderInfo->sfb_offset;
+    int* groups = coder->groups.len;
+    int* sfb_offset = coder->sfb_offset;
 
     cw_info_t cw_info[FRAME_LEN];
     cw_info_t cw_info_preso[FRAME_LEN];
 
-    int num_cw = coderInfo->cur_cw;
+    int num_cw = coder->cur_cw;
     int window_cw_cnt[MAX_SHORT_WINDOWS] = {0,0,0,0,0,0,0,0};
 
     int presort, set, num_sets;
@@ -1114,9 +1020,7 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
     /* set up local pointers to data and len */
     /* data array contains data to be written */
     /* len array contains lengths of data words */
-    int* data = coderInfo->data;
-    int* len  = coderInfo->len;
-    int* num_data = coderInfo->num_data_cw;
+    int* num_data = coder->num_data_cw;
 
     if (writeFlag) {
         /* build offset table */
@@ -1125,7 +1029,7 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
         for (i = 0; i < num_cw; i++) {
             cur_cw_len = 0;
             for (j = 0; j < num_data[i]; j++) {
-                cur_cw_len += len[cur_data++];
+                cur_cw_len += coder->s[cur_data++].len;
             }
 
             cw_info[i].num_data = num_data[i];
@@ -1137,8 +1041,8 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
         /* presort codewords ------------------------------------------------ */
         /* classify codewords first */
         sfb_cnt = win_cnt = win_grp_cnt = coeff_cnt = last_sfb = acc_win_cnt = 0;
-        cur_sfb_len = sfb_offset[1] / window_group_length[0];
-        cur_cb = coderInfo->book_vector[0];
+        cur_sfb_len = sfb_offset[1] / groups[0];
+        cur_cb = coder->book[0];
         for (i = 0; i < num_cw; i++) {
             /* Set codeword info parameters */
             cw_info[i].cb = cur_cb;
@@ -1153,22 +1057,22 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
                 last_sfb += cur_sfb_len;
 
                 win_cnt++; /* next window */
-                if (win_cnt == window_group_length[win_grp_cnt]) {
+                if (win_cnt == groups[win_grp_cnt]) {
                     win_cnt = 0;
 
                     sfb_cnt++; /* next sfb */
-                    if (sfb_cnt == coderInfo->all_sfb) {
+                    if (sfb_cnt == coder->all_sfb) {
                         sfb_cnt = 0;
 
-                        acc_win_cnt += window_group_length[win_grp_cnt];
+                        acc_win_cnt += groups[win_grp_cnt];
                         win_grp_cnt++; /* next window group */
                     }
 
                     /* new codebook and sfb length */
-                    cur_cb = coderInfo->book_vector[sfb_cnt];
+                    cur_cb = coder->book[sfb_cnt];
                     if (last_sfb < FRAME_LEN) {
                         cur_sfb_len = (sfb_offset[sfb_cnt + 1] - sfb_offset[sfb_cnt])
-                            / window_group_length[win_grp_cnt];
+                            / groups[win_grp_cnt];
                     }
                 }
             }
@@ -1179,7 +1083,7 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
 
 /* Somehow the second presorting step does not give expected results. Disabling the
    following code surprisingly gives good results. TODO: find the bug */
-        if (0) {//coderInfo->block_type == ONLY_SHORT_WINDOW) {
+        if (0) {//coder->block_type == ONLY_SHORT_WINDOW) {
             for (i = 0; i < MAX_SHORT_WINDOWS; i++)
                 window_cw_cnt[i] = 0; /* reset all counters */
 
@@ -1220,7 +1124,7 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
             for (i = 0; i < num_cw; i++) {
                 /* process only codewords that are due now */
                 if ((cw_info_preso[i].cb == nextCB) ||
-                    ((nextCB < ESC_HCB) && (cw_info_preso[i].cb == nextCB + 1)))
+                    ((nextCB < HCB_ESC) && (cw_info_preso[i].cb == nextCB + 1)))
                 {
                     cw_info[cw_cnt++] = cw_info_preso[i];
                 }
@@ -1231,12 +1135,12 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
         accsegmsize = 0;
         for (i = 0; i < num_cw; i++) {
             /* 8.5.3.3.3.2 Derivation of segment width */
-            cursegmsize = min(maxCwLen[cw_info[i].cb], coderInfo->iLenLongestCW);
+            cursegmsize = min(maxCwLen[cw_info[i].cb], coder->iLenLongestCW);
 
-            if (accsegmsize + cursegmsize > coderInfo->iLenReordSpData) {
+            if (accsegmsize + cursegmsize > coder->iLenReordSpData) {
                 /* the last segment is extended until iLenReordSpData */
-                segment[segmcnt - 1].right = coderInfo->iLenReordSpData - 1;
-                segment[segmcnt - 1].len = coderInfo->iLenReordSpData - segment[segmcnt - 1].left;
+                segment[segmcnt - 1].right = coder->iLenReordSpData - 1;
+                segment[segmcnt - 1].len = coder->iLenReordSpData - segment[segmcnt - 1].left;
                 break;
             }
 
@@ -1293,34 +1197,34 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
                         for (cw_part_cnt = 0; cw_part_cnt < cw_info[codeword_index].num_data; cw_part_cnt++) {
                             cur_cw_part = cw_info[codeword_index].cw_offset + cw_part_cnt;
 
-                            if (len[cur_cw_part] <= tmplen) {
+                            if (coder->s[cur_cw_part].len <= tmplen) {
                                 /* write complete data, no partitioning */
                                 if (is_backwards) {
                                     /* write data in reversed bit-order */
-                                    PutBitHcr(bitStream, startbitpos + segment[segment_index].right - len[cur_cw_part] + 1,
-                                        rewind_word(data[cur_cw_part], len[cur_cw_part]), len[cur_cw_part]);
+                                    PutBitHcr(bitStream, startbitpos + segment[segment_index].right - coder->s[cur_cw_part].len + 1,
+                                        rewind_word(coder->s[cur_cw_part].data, coder->s[cur_cw_part].len), coder->s[cur_cw_part].len);
 
-                                    segment[segment_index].right -= len[cur_cw_part];
+                                    segment[segment_index].right -= coder->s[cur_cw_part].len;
                                 } else {
                                     PutBitHcr(bitStream, startbitpos + segment[segment_index].left,
-                                        data[cur_cw_part], len[cur_cw_part]);
+                                        coder->s[cur_cw_part].data, coder->s[cur_cw_part].len);
 
-                                    segment[segment_index].left += len[cur_cw_part];
+                                    segment[segment_index].left += coder->s[cur_cw_part].len;
                                 }
 
-                                tmplen -= len[cur_cw_part];
-                                len[cur_cw_part] = 0;
+                                tmplen -= coder->s[cur_cw_part].len;
+                                coder->s[cur_cw_part].len = 0;
                             } else {
                                 /* codeword part must be partitioned */
                                 /* data must be taken from the left side */
-                                tmp_data = data[cur_cw_part];
+                                tmp_data = coder->s[cur_cw_part].data;
 
-                                diff = len[cur_cw_part] - tmplen;
+                                diff = coder->s[cur_cw_part].len - tmplen;
                                 tmp_data >>= diff;
 
                                 /* remove bits which are already used */
-                                data[cur_cw_part] &= (1 << diff) - 1 /* diff number of ones */;
-                                len[cur_cw_part] = diff;
+                                coder->s[cur_cw_part].data &= (1 << diff) - 1 /* diff number of ones */;
+                                coder->s[cur_cw_part].len = diff;
 
                                 if (is_backwards) {
                                     /* write data in reversed bit-order */
@@ -1350,11 +1254,11 @@ static int WriteReorderedSpectralData(CoderInfo *coderInfo,
         }
 
         /* set parameter for bit stream to current correct position */
-        bitStream->currentBit = startbitpos + coderInfo->iLenReordSpData;
+        bitStream->currentBit = startbitpos + coder->iLenReordSpData;
         bitStream->numBit = bitStream->currentBit;
     }
 
-    return coderInfo->iLenReordSpData;
+    return coder->iLenReordSpData;
 }
 
 /*

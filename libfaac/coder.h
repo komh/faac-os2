@@ -70,22 +70,6 @@ enum WINDOW_TYPE {
 #define LEN_TNS_NFILTL 2
 #define LEN_TNS_NFILTS 1
 
-#define DELAY 2048
-#define LEN_LTP_DATA_PRESENT 1
-#define LEN_LTP_LAG 11
-#define LEN_LTP_COEF 3
-#define LEN_LTP_SHORT_USED 1
-#define LEN_LTP_SHORT_LAG_PRESENT 1
-#define LEN_LTP_SHORT_LAG 5
-#define LTP_LAG_OFFSET 16
-#define LEN_LTP_LONG_USED 1
-#define MAX_LT_PRED_LONG_SFB 40
-#define MAX_LT_PRED_SHORT_SFB 13
-#define SHORT_SQ_OFFSET (BLOCK_LEN_LONG-(BLOCK_LEN_SHORT*4+BLOCK_LEN_SHORT/2))
-#define CODESIZE 8
-#define NOK_LT_BLEN (3 * BLOCK_LEN_LONG)
-
-#define SBMAX_L 49
 #define LPC 2
 
 typedef struct {
@@ -117,22 +101,6 @@ typedef struct {
 
 typedef struct
 {
-    int weight_idx;
-    double weight;
-    int sbk_prediction_used[MAX_SHORT_WINDOWS];
-    int sfb_prediction_used[MAX_SCFAC_BANDS];
-    int delay[MAX_SHORT_WINDOWS];
-    int global_pred_flag;
-    int side_info;
-    double *buffer;
-    double *mdct_predicted;
-
-    double *time_buffer;
-    double *ltp_overlap_buffer;
-} LtpInfo;
-
-typedef struct
-{
     int psy_init_mc;
     double dr_mc[LPC][BLOCK_LEN_LONG],e_mc[LPC+1+1][BLOCK_LEN_LONG];
     double K_mc[LPC+1][BLOCK_LEN_LONG], R_mc[LPC+1][BLOCK_LEN_LONG];
@@ -150,30 +118,28 @@ typedef struct {
     int desired_block_type;
 
     int global_gain;
-    int scale_factor[MAX_SCFAC_BANDS];
+    int sf[MAX_SCFAC_BANDS];
+    int book[MAX_SCFAC_BANDS];
+    int bandcnt;
+    int sfbn;
+    int sfb_offset[NSFB_LONG + 1];
 
-    int num_window_groups;
-    int window_group_length[8];
-    int max_sfb;
-    int nr_of_sfb;
-    int sfb_offset[250];
-    int lastx;
-    double avgenrg;
+    struct {
+        int n;
+        int len[MAX_SHORT_WINDOWS];
+    } groups;
 
-    int spectral_count;
+    /* worst case: one codeword with two escapes per two spectral lines */
+#define DATASIZE (3*FRAME_LEN/2)
 
-    /* Huffman codebook selected for each sf band */
-    int book_vector[MAX_SCFAC_BANDS];
-
-    /* Data of spectral bitstream elements, for each spectral pair,
-       5 elements are required: 1*(esc)+2*(sign)+2*(esc value)=5 */
-    int *data;
-
-    /* Lengths of spectral bitstream elements */
-    int *len;
+    struct {
+        int data;
+        int len;
+    } s[DATASIZE];
+    int datacnt;
 
 #ifdef DRM
-    int *num_data_cw;
+    int num_data_cw[FRAME_LEN];
     int cur_cw;
     int all_sfb;
 
@@ -181,18 +147,8 @@ typedef struct {
     int iLenReordSpData;
 #endif
 
-    /* Holds the requantized spectrum */
-    double *requantFreq;
-
     TnsInfo tnsInfo;
-    LtpInfo ltpInfo;
     BwpInfo bwpInfo;
-
-    int max_pred_sfb;
-    int pred_global_flag;
-    int pred_sfb_flag[MAX_SCFAC_BANDS];
-    int reset_group_number;
-
 } CoderInfo;
 
 typedef struct {

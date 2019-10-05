@@ -22,7 +22,7 @@ Copyright(c)1996.
  *                                                                           *
  ****************************************************************************/
 /*
- * $Id: filtbank.c,v 1.13 2005/02/02 07:51:12 sur Exp $
+ * $Id: filtbank.c,v 1.14 2012/03/01 18:34:17 knik Exp $
  */
 
 /*
@@ -51,7 +51,7 @@ static void		IMDCT				( FFT_Tables *fft_tables, double *data, int N );
 
 
 
-void FilterBankInit(faacEncHandle hEncoder)
+void FilterBankInit(faacEncStruct* hEncoder)
 {
     unsigned int i, channel;
 
@@ -75,7 +75,7 @@ void FilterBankInit(faacEncHandle hEncoder)
     CalculateKBDWindow(hEncoder->kbd_window_short, 6, BLOCK_LEN_SHORT*2);
 }
 
-void FilterBankEnd(faacEncHandle hEncoder)
+void FilterBankEnd(faacEncStruct* hEncoder)
 {
     unsigned int channel;
 
@@ -90,7 +90,7 @@ void FilterBankEnd(faacEncHandle hEncoder)
     if (hEncoder->kbd_window_short) FreeMemory(hEncoder->kbd_window_short);
 }
 
-void FilterBank(faacEncHandle hEncoder,
+void FilterBank(faacEncStruct* hEncoder,
                 CoderInfo *coderInfo,
                 double *p_in_data,
                 double *p_out_mdct,
@@ -123,6 +123,7 @@ void FilterBank(faacEncHandle hEncoder,
             else
                 first_window = hEncoder->sin_window_short;
             break;
+        default:
         case KBD_WINDOW:
             if ( (block_type == ONLY_LONG_WINDOW) || (block_type == LONG_SHORT_WINDOW))
                 first_window = hEncoder->kbd_window_long;
@@ -133,6 +134,7 @@ void FilterBank(faacEncHandle hEncoder,
 
         switch (coderInfo->window_shape){
         case SINE_WINDOW:
+        default:
             if ( (block_type == ONLY_LONG_WINDOW) || (block_type == SHORT_LONG_WINDOW))
                 second_window = hEncoder->sin_window_long;
             else
@@ -202,7 +204,7 @@ void FilterBank(faacEncHandle hEncoder,
     if (transf_buf) FreeMemory(transf_buf);
 }
 
-void IFilterBank(faacEncHandle hEncoder,
+void IFilterBank(faacEncStruct* hEncoder,
                  CoderInfo *coderInfo,
                  double *p_in_data,
                  double *p_out_data,

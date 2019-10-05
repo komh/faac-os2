@@ -16,7 +16,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: input.c,v 1.16 2009/01/25 18:50:32 menno Exp $
+ * $Id: input.c,v 1.21 2017/07/02 14:35:23 knik Exp $
  */
 
 #ifdef HAVE_CONFIG_H
@@ -78,7 +78,7 @@ struct WAVEFORMATEX
   u_int16_t wBitsPerSample;
   u_int16_t cbSize;
 }
-#ifdef __GNUC
+#ifdef __GNUC__
 __attribute__((packed))
 #endif
 ;
@@ -94,7 +94,7 @@ struct WAVEFORMATEXTENSIBLE
   u_int32_t dwChannelMask;		// which channels are present in stream
   unsigned char SubFormat[16];		// guid
 }
-#ifdef __GNUC
+#ifdef __GNUC__
 __attribute__((packed))
 #endif
 ;
@@ -116,17 +116,44 @@ static void unsuperr(const char *name)
   fprintf(stderr, "%s: file format not supported\n", name);
 }
 
+static void seekcur(FILE *f, int ofs)
+{
+    int cnt;
+
+    for (cnt = 0; cnt < ofs; cnt++)
+        fgetc(f);
+}
+
+static int seekchunk(FILE *f, riffsub_t *riffsub, char *name)
+{
+ int skipped;
+
+ for(skipped = 0; skipped < 10; skipped++)
+ {
+   if (fread(riffsub, 1, sizeof(*riffsub), f) != sizeof(*riffsub))
+     return 0;
+
+   riffsub->len = UINT32(riffsub->len);
+   if (riffsub->len & 1)
+     riffsub->len++;
+
+   if (!memcmp(&(riffsub->label), name, 4))
+     return 1;
+
+   seekcur(f, riffsub->len);
+ }
+
+ return 0;
+}
+
 pcmfile_t *wav_open_read(const char *name, int rawinput)
 {
-  int i;
-  int skip;
   FILE *wave_f;
   riff_t riff;
   riffsub_t riffsub;
   struct WAVEFORMATEXTENSIBLE wave;
   char *riffl = "RIFF";
   char *wavel = "WAVE";
-  char *bextl = "BEXT";
   char *fmtl = "fmt ";
   char *datal = "data";
   int fmtsize;
@@ -156,44 +183,26 @@ pcmfile_t *wav_open_read(const char *name, int rawinput)
     if (memcmp(&(riff.chunk_type), wavel, 4))
       return NULL;
 
-    // handle broadcast extensions. added by pro-tools,otherwise it must be fmt chunk.
-    if (fread(&riffsub, 1, sizeof(riffsub), wave_f) != sizeof(riffsub))
-        return NULL;
-    riffsub.len = UINT32(riffsub.len);
-
-    if (!memcmp(&(riffsub.label), bextl, 4))
-    {
-        fseek(wave_f, riffsub.len, SEEK_CUR);
-
-        if (fread(&riffsub, 1, sizeof(riffsub), wave_f) != sizeof(riffsub))
-            return NULL;
-        riffsub.len = UINT32(riffsub.len);
-    }
+    if (!seekchunk(wave_f, &riffsub, fmtl))
+      return NULL;
 
     if (memcmp(&(riffsub.label), fmtl, 4))
         return NULL;
     memset(&wave, 0, sizeof(wave));
 
     fmtsize = (riffsub.len < sizeof(wave)) ? riffsub.len : sizeof(wave);
-    if (fread(&wave, 1, fmtsize, wave_f) != fmtsize)
+    // check if format is at least 16 bytes long
+    if (fmtsize < 16)
+	return NULL;
+
+   if (fread(&wave, 1, fmtsize, wave_f) != fmtsize)
         return NULL;
 
-    for (skip = riffsub.len - fmtsize; skip > 0; skip--)
-      fgetc(wave_f);
+    seekcur(wave_f, riffsub.len - fmtsize);
 
-    for (i = 0;; i++)
-    {
-      if (fread(&riffsub, 1, sizeof(riffsub), wave_f) != sizeof(riffsub))
-	return NULL;
-      riffsub.len = UINT32(riffsub.len);
-      if (!memcmp(&(riffsub.label), datal, 4))
-	break;
-      if (i > 10)
-	return NULL;
+    if (!seekchunk(wave_f, &riffsub, datal))
+      return NULL;
 
-      for (skip = riffsub.len; skip > 0; skip--)
-	fgetc(wave_f);
-    }
     if (UINT16(wave.Format.wFormatTag) != WAVE_FORMAT_PCM && UINT16(wave.Format.wFormatTag) != WAVE_FORMAT_FLOAT)
     {
       if (UINT16(wave.Format.wFormatTag) == WAVE_FORMAT_EXTENSIBLE)
@@ -269,125 +278,114 @@ static void chan_remap(int32_t *buf, int channels, int blocks, int *map)
 
 size_t wav_read_float32(pcmfile_t *sndf, float *buf, size_t num, int *map)
 {
-  size_t i = 0;
-  unsigned char bufi[8];
+  size_t cnt;
+  size_t isize;
+  void *bufi;
 
-  if ((sndf->samplebytes > 8) || (sndf->samplebytes < 1))
+  if ((sndf->samplebytes > 4) || (sndf->samplebytes < 1))
     return 0;
 
-  while (i<num) {
-    if (fread(bufi, sndf->samplebytes, 1, sndf->f) != 1)
-      break;
+  isize = num * sndf->samplebytes;
+  bufi = (buf + num);
+  bufi -= isize;
+  isize = fread(bufi, 1, isize, sndf->f);
+  isize /= sndf->samplebytes;
 
-    if (sndf->isfloat)
-    {
-      switch (sndf->samplebytes) {
-      case 4:
-        buf[i] = (*(float *)&bufi) * (float)32768;
-        break;
+  // perform in-place conversion
+  for (cnt = 0; cnt < num; cnt++)
+  {
+      if (cnt >= isize)
+          break;
 
-      case 8:
-        buf[i] = (float)((*(double *)&bufi) * (float)32768);
-        break;
-
-      default:
-        return 0;
+      if (sndf->isfloat)
+      {
+          switch (sndf->samplebytes) {
+          case 4:
+              buf[cnt] *= 32768.0;
+              break;
+          default:
+              return 0;
+          }
+          continue;
       }
-    }
-    else
-    {
-      // convert to 32 bit float
-      // fix endianness
-      switch (sndf->samplebytes) {
+
+      switch (sndf->samplebytes)
+      {
       case 1:
-        /* this is endian clean */
-        buf[i] = ((float)bufi[0] - 128) * (float)256;
-        break;
+          {
+              uint8_t *in = bufi;
+              uint8_t s = in[cnt];
 
+              buf[cnt] = ((float)s - 128.0) * (float)256;
+          }
+          break;
       case 2:
+          {
+              int16_t *in = bufi;
+              int16_t s = in[cnt];
 #ifdef WORDS_BIGENDIAN
-        if (!sndf->bigendian)
+              if (!sndf->bigendian)
 #else
-        if (sndf->bigendian)
+              if (sndf->bigendian)
 #endif
-        {
-          // swap bytes
-          int16_t s = ((int16_t *)bufi)[0];
-          s = SWAP16(s);
-          buf[i] = (float)s;
-        }
-        else
-        {
-          // no swap
-          int s = ((int16_t *)bufi)[0];
-          buf[i] = (float)s;
-        }
-        break;
-
+                  buf[cnt] = (float)SWAP16(s);
+              else
+                  buf[cnt] = (float)s;
+          }
+          break;
       case 3:
-        if (!sndf->bigendian)
-        {
-          int s = bufi[0] | (bufi[1] << 8) | (bufi[2] << 16);
+          {
+              int s;
+              uint8_t *in = bufi;
+              in += 3 * cnt;
 
-          // fix sign
-          if (s & 0x800000)
-            s |= 0xff000000;
+              if (!sndf->bigendian)
+                  s = in[0] | (in[1] << 8) | (in[2] << 16);
+              else
+                  s = (in[0] << 16) | (in[1] << 8) | in[2];
 
-          buf[i] = (float)s / 256;
-        }
-        else // big endian input
-        {
-          int s = (bufi[0] << 16) | (bufi[1] << 8) | bufi[2];
+              // fix sign
+              if (s & 0x800000)
+                  s |= 0xff000000;
 
-          // fix sign
-          if (s & 0x800000)
-            s |= 0xff000000;
-
-          buf[i] = (float)s / 256;
-        }
+              buf[cnt] = (float)s / 256;
+          }
         break;
-
       case 4:
+          {
+              int32_t *in = bufi;
+              int s = in[cnt];
 #ifdef WORDS_BIGENDIAN
-        if (!sndf->bigendian)
+              if (!sndf->bigendian)
 #else
-        if (sndf->bigendian)
+              if (sndf->bigendian)
 #endif
-        {
-          // swap bytes
-          int s = *(int *)&bufi;
-          buf[i] = (float)SWAP32(s) / 65536;
-        }
-        else
-        {
-          int s = *(int *)&bufi;
-          buf[i] = (float)s / 65536;
-        }
-        break;
-
+                  buf[cnt] = (float)SWAP32(s) / 65536;
+              else
+                  buf[cnt] = (float)s / 65536;
+          }
+          break;
       default:
-        return 0;
+          return 0;
       }
-    }
-    i++;
   }
 
   if (map)
-    chan_remap((int32_t *)buf, sndf->channels, i / sndf->channels, map);
+    chan_remap((int32_t *)buf, sndf->channels, cnt / sndf->channels, map);
 
-  return i;
+  return cnt;
 }
 
 size_t wav_read_int24(pcmfile_t *sndf, int32_t *buf, size_t num, int *map)
 {
   int size;
   int i;
-  unsigned char *bufi;
+  uint8_t *bufi;
 
   if ((sndf->samplebytes > 4) || (sndf->samplebytes < 1))
     return 0;
 
-  bufi = (char *)buf + sizeof(*buf) * num - sndf->samplebytes * (num - 1) - sizeof(*buf);
+  bufi = (uint8_t *)buf + sizeof(*buf) * num - sndf->samplebytes * (num - 1) - sizeof(*buf);
 
   size = fread(bufi, sndf->samplebytes, num, sndf->f);
 

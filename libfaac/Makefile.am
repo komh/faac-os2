@@ -1,13 +1,27 @@
-lib_LTLIBRARIES = libfaac.la
-
-main_SOURCES = aacquant.c bitstream.c fft.c frame.c midside.c psychkni.c util.c backpred.c channels.c filtbank.c huffman.c ltp.c tns.c
-if USE_DRM
-drm_SOURCES = kiss_fft/kiss_fftr.c kiss_fft/kiss_fft.c
+common_SOURCES = bitstream.c fft.c frame.c blockswitch.c util.c channels.c filtbank.c tns.c quantize.c huff2.c huffdata.c stereo.c
+common_INCLUDES = channels.h filtbank.h blockswitch.h coder.h frame.h tns.h bitstream.h fft.h util.h quantize.h huffdata.h huff2.h stereo.h
+common_LIBADD = -lm
+common_CFLAGS = -fvisibility=hidden
+if CPUSSE
+common_CFLAGS += -msse2
 endif
-libfaac_la_SOURCES = $(main_SOURCES) $(drm_SOURCES)
-libfaac_la_INCLUDES = aacquant.h channels.h filtbank.h hufftab.h psych.h backpred.h coder.h frame.h midside.h tns.h bitstream.h fft.h huffman.h ltp.h util.h
-libfaac_la_LIBADD = -lm
 
-INCLUDES = -I$(top_srcdir)/include
+if USE_DRM
+lib_LTLIBRARIES = libfaac_drm.la
+libfaac_drm_la_SOURCES = ${common_SOURCES} ${common_INCLUDES} kiss_fft/kiss_fftr.c kiss_fft/kiss_fft.c kiss_fft/kiss_fft.h
+EXTRA_libfaac_drm_la_SOURCES = kiss_fft/_kiss_fft_guts.h kiss_fft/kiss_fftr.h kiss_fft/README kiss_fft/README.kiss_fft
+libfaac_drm_la_LIBADD = ${common_LIBADD}
+libfaac_drm_la_CFLAGS = ${common_CFLAGS} -DDRM
+else
+lib_LTLIBRARIES = libfaac.la
+libfaac_la_SOURCES = ${common_SOURCES} ${common_INCLUDES}
+libfaac_la_LIBADD = ${common_LIBADD}
+libfaac_la_CFLAGS = ${common_CFLAGS}
+endif
 
+libfaac_la_LDFLAGS = -no-undefined
+if MINGW
+libfaac_la_LDFLAGS += -Wl,--add-stdcall-alias
+endif
 
+AM_CPPFLAGS = -I$(top_srcdir)/include

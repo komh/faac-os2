@@ -16,7 +16,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: frame.h,v 1.30 2009/01/25 18:50:32 menno Exp $
+ * $Id: frame.h,v 1.32 2012/03/01 18:34:17 knik Exp $
  */
 
 #ifndef FRAME_H
@@ -36,6 +36,8 @@
 # include <stdint.h>
 #endif
 
+#include <faac.h>
+
 #ifndef HAVE_INT32_T
 typedef signed int int32_t;
 #endif
@@ -46,26 +48,11 @@ extern "C" {
 
 #include "coder.h"
 #include "channels.h"
-#include "psych.h"
-#include "aacquant.h"
+#include "blockswitch.h"
 #include "fft.h"
-
-#if defined(_WIN32) && !defined(__MINGW32__)
-  #ifndef FAACAPI
-    #define FAACAPI __stdcall
-  #endif
-#else
-  #ifndef FAACAPI
-    #define FAACAPI
-  #endif
-#endif
+#include "quantize.h"
 
 #pragma pack(push, 1)
-
-typedef struct {
-  psymodel_t *model;
-  char *name;
-} psymodellist_t;
 
 #include <faaccfg.h>
 
@@ -91,7 +78,6 @@ typedef struct {
     double *nextSampleBuff[MAX_CHANNELS];
     double *next2SampleBuff[MAX_CHANNELS];
     double *next3SampleBuff[MAX_CHANNELS];
-    double *ltpTimeBuff[MAX_CHANNELS];
 
     /* Filterbank buffers */
     double *sin_window_long;
@@ -119,37 +105,9 @@ typedef struct {
     /* quantizer specific config */
     AACQuantCfg aacquantCfg;
 
-	/* FFT Tables */
-	FFT_Tables	fft_tables;
-
-    /* output bits difference in average bitrate mode */
-    int bitDiff;
-} faacEncStruct, *faacEncHandle;
-
-int FAACAPI faacEncGetVersion(char **faac_id_string,
-			      char **faac_copyright_string);
-
-int FAACAPI faacEncGetDecoderSpecificInfo(faacEncHandle hEncoder,
-                                          unsigned char** ppBuffer,
-                                          unsigned long* pSizeOfDecoderSpecificInfo);
-
-faacEncConfigurationPtr FAACAPI faacEncGetCurrentConfiguration(faacEncHandle hEncoder);
-int FAACAPI faacEncSetConfiguration (faacEncHandle hEncoder, faacEncConfigurationPtr config);
-
-faacEncHandle FAACAPI faacEncOpen(unsigned long sampleRate,
-                                  unsigned int numChannels,
-                                  unsigned long *inputSamples,
-                                  unsigned long *maxOutputBytes);
-
-int FAACAPI faacEncEncode(faacEncHandle hEncoder,
-                          int32_t *inputBuffer,
-                          unsigned int samplesInput,
-                          unsigned char *outputBuffer,
-                          unsigned int bufferSize
-                          );
-
-int FAACAPI faacEncClose(faacEncHandle hEncoder);
-
+    /* FFT Tables */
+    FFT_Tables	fft_tables;
+} faacEncStruct;
 
 #pragma pack(pop)
 

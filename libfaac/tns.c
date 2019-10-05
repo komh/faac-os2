@@ -24,7 +24,7 @@ copyright notice must be included in all copies or derivative works.
 Copyright (c) 1997.
 **********************************************************************/
 /*
- * $Id: tns.c,v 1.10 2003/11/24 18:08:28 knik Exp $
+ * $Id: tns.c,v 1.11 2012/03/01 18:34:17 knik Exp $
  */
 
 #include <math.h>
@@ -37,9 +37,6 @@ Copyright (c) 1997.
 /***********************************************/
 /* TNS Profile/Frequency Dependent Parameters  */
 /***********************************************/
-static unsigned long tnsSupportedSamplingRates[13] =
-{ 96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,0 };
-
 /* Limit bands to > 2.0 kHz */
 static unsigned short tnsMinBandNumberLong[12] =
 { 11, 12, 15, 16, 17, 20, 25, 26, 24, 28, 30, 31 };
@@ -84,7 +81,7 @@ static void TnsInvFilter(int length,double* spec,TnsFilterData* filter);
 /*****************************************************/
 /* InitTns:                                          */
 /*****************************************************/
-void TnsInit(faacEncHandle hEncoder)
+void TnsInit(faacEncStruct* hEncoder)
 {
     unsigned int channel;
     int fsIndex = hEncoder->sampleRateIdx;
@@ -488,7 +485,7 @@ static void QuantizeReflectionCoeffs(int fOrder,
 
     /* Quantize and inverse quantize */
     for (i=1;i<=fOrder;i++) {
-        indexArray[i] = (int)(0.5+(asin(kArray[i])*((kArray[i]>=0)?iqfac:iqfac_m)));
+        indexArray[i] = (kArray[i]>=0)?(int)(0.5+(asin(kArray[i])*iqfac)):(int)(-0.5+(asin(kArray[i])*iqfac_m));
         kArray[i] = sin((double)indexArray[i]/((indexArray[i]>=0)?iqfac:iqfac_m));
     }
 }

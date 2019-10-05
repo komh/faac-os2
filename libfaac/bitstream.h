@@ -31,9 +31,6 @@ copyright notice must be included in all copies or derivative works.
 
 Copyright (c) 1996.
 **********************************************************************/
-/*
- * $Id: bitstream.h,v 1.14 2004/07/04 12:10:52 corrados Exp $
- */
 
 #ifndef BITSTREAM_H
 #define BITSTREAM_H
@@ -109,7 +106,6 @@ extern "C" {
 # define FIRST_PAIR_HCB 5
 # define QUAD_LEN 4
 # define PAIR_LEN 2
-# define ESC_HCB 11
 #endif
 
 #define ID_SCE 0
@@ -137,6 +133,7 @@ extern "C" {
 #define LONG_NUMBIT 32      /* bits in unsigned long */
 #define bit2byte(a) (((a)+BYTE_NUMBIT-1)/BYTE_NUMBIT)
 
+enum {ADTS_FRAMESIZE = 1 << 13};
 
 typedef struct
 {
@@ -149,7 +146,7 @@ typedef struct
 
 
 
-int WriteBitstream(faacEncHandle hEncoder,
+int WriteBitstream(faacEncStruct* hEncoder,
                    CoderInfo *coderInfo,
                    ChannelInfo *channelInfo,
                    BitStream *bitStream,
